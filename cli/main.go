@@ -13,7 +13,7 @@ import (
 	"github.com/zhaobenny/cctop/cli/internal/output"
 	"github.com/zhaobenny/cctop/cli/internal/sync"
 	"github.com/zhaobenny/cctop/internal/model"
-	"github.com/zhaobenny/cctop/internal/parser"
+	"github.com/zhaobenny/cctop/cli/internal/parser"
 )
 
 const version = "0.2.0"
