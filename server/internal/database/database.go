@@ -149,7 +149,24 @@ func (db *DB) Migrate() error {
 	`
 
 	_, err := db.Exec(schema)
-	return err
+	if err != nil {
+		return err
+	}
+
+	// Run migrations for existing databases
+	db.migrate_addCostColumn()
+
+	return nil
+}
+
+// migrate_addCostColumn adds cost column to usage_records if missing (added in later version)
+func (db *DB) migrate_addCostColumn() {
+	// Check if column exists by querying pragma
+	var count int
+	db.QueryRow("SELECT COUNT(*) FROM pragma_table_info('usage_records') WHERE name='cost'").Scan(&count)
+	if count == 0 {
+		db.Exec("ALTER TABLE usage_records ADD COLUMN cost REAL DEFAULT 0")
+	}
 }
 
 // CreateUser creates a new user
@@ -539,6 +556,13 @@ func (db *DB) GetUsageByMonth(userID string) ([]AggregatedUsage, error) {
 	}
 
 	return results, nil
+}
+
+// HasSummaries checks if a user has any summaries
+func (db *DB) HasSummaries(userID string) bool {
+	var count int
+	db.QueryRow("SELECT COUNT(*) FROM usage_summary WHERE user_id = ? LIMIT 1", userID).Scan(&count)
+	return count > 0
 }
 
 // GetTotalUsage returns total usage for a user, optionally filtered by billing period
