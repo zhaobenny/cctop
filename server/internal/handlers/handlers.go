@@ -408,3 +408,17 @@ func (h *Handler) jsonError(w http.ResponseWriter, message string, status int) {
 	w.WriteHeader(status)
 	json.NewEncoder(w).Encode(map[string]string{"error": message})
 }
+
+// Health handles the health check endpoint
+func (h *Handler) Health(w http.ResponseWriter, r *http.Request) {
+	// Check database connectivity
+	if err := h.db.Ping(); err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusServiceUnavailable)
+		json.NewEncoder(w).Encode(map[string]string{"status": "unhealthy", "error": "database unavailable"})
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{"status": "healthy"})
+}
