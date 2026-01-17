@@ -1,6 +1,8 @@
 module github.com/zhaobenny/cctop
 
-go 1.22
+go 1.24.0
+
+toolchain go1.24.12
 
 require (
 	github.com/alexedwards/scs/sqlite3store v0.0.0-20251002162104-209de6e426de
@@ -8,6 +10,7 @@ require (
 	github.com/kardianos/service v1.2.2
 	github.com/mattn/go-sqlite3 v1.14.24
 	golang.org/x/crypto v0.31.0
+	golang.org/x/time v0.14.0
 	gopkg.in/yaml.v3 v3.0.1
 )
 
