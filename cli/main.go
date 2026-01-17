@@ -425,7 +425,10 @@ Examples:
 		if err := s.Install(); err != nil {
 			log.Fatalf("Failed to install service: %v", err)
 		}
-		fmt.Printf("Service installed. Run 'cctop sync start' to start it.\n")
+		if err := s.Start(); err != nil {
+			log.Fatalf("Service installed but failed to start: %v", err)
+		}
+		fmt.Printf("Service installed and started.\n")
 		fmt.Printf("Sync interval: %s\n", interval)
 		return
 

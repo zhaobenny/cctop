@@ -18,11 +18,11 @@ type Config struct {
 
 // configPath returns the path to the config file
 func configPath() (string, error) {
-	home, err := os.UserHomeDir()
+	configDir, err := os.UserConfigDir()
 	if err != nil {
 		return "", err
 	}
-	return filepath.Join(home, ".cctop.yaml"), nil
+	return filepath.Join(configDir, "cctop", "config.yaml"), nil
 }
 
 // Load loads the configuration from disk
@@ -61,6 +61,10 @@ func Save(cfg *Config) error {
 
 	path, err := configPath()
 	if err != nil {
+		return err
+	}
+
+	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
 		return err
 	}
 
