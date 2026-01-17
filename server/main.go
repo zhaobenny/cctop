@@ -80,7 +80,7 @@ func main() {
 	mux.Handle("/logout", authMiddleware.RequireAuth(http.HandlerFunc(h.Logout)))
 	mux.Handle("/partial/dashboard", authMiddleware.RequireAuth(http.HandlerFunc(h.PartialDashboard)))
 	mux.Handle("/partial/usage-table", authMiddleware.RequireAuth(http.HandlerFunc(h.PartialUsageTable)))
-	mux.Handle("/settings/reset-date", authMiddleware.RequireAuth(http.HandlerFunc(h.UpdateResetDate)))
+	mux.Handle("/settings/billing-day", authMiddleware.RequireAuth(http.HandlerFunc(h.UpdateBillingDay)))
 
 	// API routes (API key-based)
 	mux.Handle("/api/sync", authMiddleware.RequireAPIKey(http.HandlerFunc(h.APISync)))

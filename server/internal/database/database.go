@@ -19,7 +19,7 @@ type User struct {
 	Username     string
 	PasswordHash string
 	APIKey       string
-	ResetDate    string // YYYY-MM-DD or empty
+	BillingDay   int // Day of month (1-31), 0 = disabled
 	CreatedAt    time.Time
 }
 
@@ -77,7 +77,7 @@ func (db *DB) Migrate() error {
 		username TEXT UNIQUE NOT NULL,
 		password_hash TEXT NOT NULL,
 		api_key TEXT UNIQUE NOT NULL,
-		reset_date TEXT DEFAULT '',
+		billing_day INTEGER DEFAULT 0,
 		created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 	);
 
@@ -125,9 +125,9 @@ func (db *DB) Migrate() error {
 // CreateUser creates a new user
 func (db *DB) CreateUser(user *User) error {
 	_, err := db.Exec(
-		`INSERT INTO users (id, username, password_hash, api_key, reset_date, created_at)
+		`INSERT INTO users (id, username, password_hash, api_key, billing_day, created_at)
 		 VALUES (?, ?, ?, ?, ?, ?)`,
-		user.ID, user.Username, user.PasswordHash, user.APIKey, user.ResetDate, user.CreatedAt,
+		user.ID, user.Username, user.PasswordHash, user.APIKey, user.BillingDay, user.CreatedAt,
 	)
 	return err
 }
@@ -136,10 +136,10 @@ func (db *DB) CreateUser(user *User) error {
 func (db *DB) GetUserByUsername(username string) (*User, error) {
 	user := &User{}
 	err := db.QueryRow(
-		`SELECT id, username, password_hash, api_key, reset_date, created_at
+		`SELECT id, username, password_hash, api_key, billing_day, created_at
 		 FROM users WHERE username = ?`,
 		username,
-	).Scan(&user.ID, &user.Username, &user.PasswordHash, &user.APIKey, &user.ResetDate, &user.CreatedAt)
+	).Scan(&user.ID, &user.Username, &user.PasswordHash, &user.APIKey, &user.BillingDay, &user.CreatedAt)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
@@ -153,10 +153,10 @@ func (db *DB) GetUserByUsername(username string) (*User, error) {
 func (db *DB) GetUserByID(id string) (*User, error) {
 	user := &User{}
 	err := db.QueryRow(
-		`SELECT id, username, password_hash, api_key, reset_date, created_at
+		`SELECT id, username, password_hash, api_key, billing_day, created_at
 		 FROM users WHERE id = ?`,
 		id,
-	).Scan(&user.ID, &user.Username, &user.PasswordHash, &user.APIKey, &user.ResetDate, &user.CreatedAt)
+	).Scan(&user.ID, &user.Username, &user.PasswordHash, &user.APIKey, &user.BillingDay, &user.CreatedAt)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
@@ -170,10 +170,10 @@ func (db *DB) GetUserByID(id string) (*User, error) {
 func (db *DB) GetUserByAPIKey(apiKey string) (*User, error) {
 	user := &User{}
 	err := db.QueryRow(
-		`SELECT id, username, password_hash, api_key, reset_date, created_at
+		`SELECT id, username, password_hash, api_key, billing_day, created_at
 		 FROM users WHERE api_key = ?`,
 		apiKey,
-	).Scan(&user.ID, &user.Username, &user.PasswordHash, &user.APIKey, &user.ResetDate, &user.CreatedAt)
+	).Scan(&user.ID, &user.Username, &user.PasswordHash, &user.APIKey, &user.BillingDay, &user.CreatedAt)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
@@ -183,9 +183,9 @@ func (db *DB) GetUserByAPIKey(apiKey string) (*User, error) {
 	return user, nil
 }
 
-// UpdateUserResetDate updates a user's reset date
-func (db *DB) UpdateUserResetDate(userID, resetDate string) error {
-	_, err := db.Exec(`UPDATE users SET reset_date = ? WHERE id = ?`, resetDate, userID)
+// UpdateUserBillingDay updates a user's billing day
+func (db *DB) UpdateUserBillingDay(userID string, billingDay int) error {
+	_, err := db.Exec(`UPDATE users SET billing_day = ? WHERE id = ?`, billingDay, userID)
 	return err
 }
 
@@ -279,8 +279,62 @@ type AggregatedUsage struct {
 	Cost                float64
 }
 
-// GetUsageByDay returns daily usage for a user, optionally filtered by reset date
-func (db *DB) GetUsageByDay(userID string, resetDate string) ([]AggregatedUsage, error) {
+// clampDay returns the billing day clamped to the last day of the given month
+func clampDay(year int, month time.Month, day int) int {
+	// Get last day of month by going to next month day 0
+	lastDay := time.Date(year, month+1, 0, 0, 0, 0, 0, time.UTC).Day()
+	if day > lastDay {
+		return lastDay
+	}
+	return day
+}
+
+// GetBillingPeriod calculates the current billing period based on billing day
+// Returns (periodStart, periodEnd) dates. If billingDay is 0, returns zero times.
+// Handles months with fewer days by clamping (e.g., day 31 in Feb becomes Feb 28/29)
+func GetBillingPeriod(billingDay int) (time.Time, time.Time) {
+	if billingDay <= 0 || billingDay > 31 {
+		return time.Time{}, time.Time{}
+	}
+
+	now := time.Now()
+	year, month, day := now.Date()
+
+	// Calculate period start - clamp to valid day for the month
+	var periodStart time.Time
+	if day >= clampDay(year, month, billingDay) {
+		// Current period started this month
+		clampedDay := clampDay(year, month, billingDay)
+		periodStart = time.Date(year, month, clampedDay, 0, 0, 0, 0, now.Location())
+	} else {
+		// Current period started last month
+		prevMonth := month - 1
+		prevYear := year
+		if prevMonth < 1 {
+			prevMonth = 12
+			prevYear--
+		}
+		clampedDay := clampDay(prevYear, prevMonth, billingDay)
+		periodStart = time.Date(prevYear, prevMonth, clampedDay, 0, 0, 0, 0, now.Location())
+	}
+
+	// Period end is one month after start, also clamped
+	endYear, endMonth := year, month+1
+	if day < clampDay(year, month, billingDay) {
+		endMonth = month
+	}
+	if endMonth > 12 {
+		endMonth = 1
+		endYear++
+	}
+	clampedEndDay := clampDay(endYear, endMonth, billingDay)
+	periodEnd := time.Date(endYear, endMonth, clampedEndDay, 0, 0, 0, 0, now.Location()).Add(-time.Second)
+
+	return periodStart, periodEnd
+}
+
+// GetUsageByDay returns daily usage for a user, optionally filtered by billing period
+func (db *DB) GetUsageByDay(userID string, billingDay int) ([]AggregatedUsage, error) {
 	query := `
 		SELECT
 			DATE(timestamp) as period,
@@ -293,9 +347,10 @@ func (db *DB) GetUsageByDay(userID string, resetDate string) ([]AggregatedUsage,
 	`
 	args := []interface{}{userID}
 
-	if resetDate != "" {
+	periodStart, _ := GetBillingPeriod(billingDay)
+	if !periodStart.IsZero() {
 		query += ` AND DATE(timestamp) >= ?`
-		args = append(args, resetDate)
+		args = append(args, periodStart.Format("2006-01-02"))
 	}
 
 	query += ` GROUP BY DATE(timestamp) ORDER BY period DESC LIMIT 30`
@@ -320,8 +375,137 @@ func (db *DB) GetUsageByDay(userID string, resetDate string) ([]AggregatedUsage,
 	return results, rows.Err()
 }
 
-// GetTotalUsage returns total usage for a user, optionally filtered by reset date
-func (db *DB) GetTotalUsage(userID string, resetDate string) (*AggregatedUsage, error) {
+// GetUsageByBillingCycle returns usage grouped by billing cycles
+func (db *DB) GetUsageByBillingCycle(userID string, billingDay int) ([]AggregatedUsage, error) {
+	if billingDay <= 0 || billingDay > 31 {
+		return nil, nil
+	}
+
+	// Get all usage records and group them by billing cycle in Go
+	// This is simpler than complex SQL for billing cycle boundaries
+	query := `
+		SELECT
+			DATE(timestamp) as day,
+			SUM(input_tokens) as input_tokens,
+			SUM(output_tokens) as output_tokens,
+			SUM(cache_creation_tokens) as cache_creation_tokens,
+			SUM(cache_read_tokens) as cache_read_tokens
+		FROM usage_records
+		WHERE user_id = ?
+		GROUP BY DATE(timestamp)
+		ORDER BY day ASC
+	`
+
+	rows, err := db.Query(query, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	// Map to accumulate usage per billing cycle
+	cycles := make(map[string]*AggregatedUsage)
+	var cycleOrder []string
+
+	for rows.Next() {
+		var day string
+		var input, output, cacheCreate, cacheRead int64
+		if err := rows.Scan(&day, &input, &output, &cacheCreate, &cacheRead); err != nil {
+			return nil, err
+		}
+
+		// Parse the day and find which billing cycle it belongs to
+		t, _ := time.Parse("2006-01-02", day)
+		year, month, dayNum := t.Date()
+
+		// Determine billing cycle start
+		var cycleStart time.Time
+		clampedDay := clampDay(year, month, billingDay)
+		if dayNum >= clampedDay {
+			cycleStart = time.Date(year, month, clampedDay, 0, 0, 0, 0, t.Location())
+		} else {
+			prevMonth := month - 1
+			prevYear := year
+			if prevMonth < 1 {
+				prevMonth = 12
+				prevYear--
+			}
+			clampedDay = clampDay(prevYear, prevMonth, billingDay)
+			cycleStart = time.Date(prevYear, prevMonth, clampedDay, 0, 0, 0, 0, t.Location())
+		}
+
+		// Calculate cycle end
+		nextMonth := cycleStart.Month() + 1
+		nextYear := cycleStart.Year()
+		if nextMonth > 12 {
+			nextMonth = 1
+			nextYear++
+		}
+		cycleEndDay := clampDay(nextYear, nextMonth, billingDay)
+		cycleEnd := time.Date(nextYear, nextMonth, cycleEndDay, 0, 0, 0, 0, t.Location()).Add(-time.Second)
+
+		// Format as "Jan 17 – Feb 16"
+		cycleKey := cycleStart.Format("Jan 2") + " – " + cycleEnd.Format("Jan 2")
+
+		if _, exists := cycles[cycleKey]; !exists {
+			cycles[cycleKey] = &AggregatedUsage{Period: cycleKey}
+			cycleOrder = append(cycleOrder, cycleKey)
+		}
+
+		cycles[cycleKey].InputTokens += input
+		cycles[cycleKey].OutputTokens += output
+		cycles[cycleKey].CacheCreationTokens += cacheCreate
+		cycles[cycleKey].CacheReadTokens += cacheRead
+	}
+
+	// Build result in reverse order (newest first)
+	var results []AggregatedUsage
+	for i := len(cycleOrder) - 1; i >= 0; i-- {
+		u := cycles[cycleOrder[i]]
+		u.Cost = calculateCost(u.InputTokens, u.OutputTokens, u.CacheCreationTokens, u.CacheReadTokens)
+		results = append(results, *u)
+	}
+
+	return results, rows.Err()
+}
+
+// GetUsageByMonth returns monthly usage for a user
+func (db *DB) GetUsageByMonth(userID string) ([]AggregatedUsage, error) {
+	query := `
+		SELECT
+			strftime('%Y-%m', timestamp) as period,
+			SUM(input_tokens) as input_tokens,
+			SUM(output_tokens) as output_tokens,
+			SUM(cache_creation_tokens) as cache_creation_tokens,
+			SUM(cache_read_tokens) as cache_read_tokens
+		FROM usage_records
+		WHERE user_id = ?
+		GROUP BY strftime('%Y-%m', timestamp)
+		ORDER BY period DESC
+		LIMIT 12
+	`
+
+	rows, err := db.Query(query, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var results []AggregatedUsage
+	for rows.Next() {
+		var u AggregatedUsage
+		err := rows.Scan(&u.Period, &u.InputTokens, &u.OutputTokens, &u.CacheCreationTokens, &u.CacheReadTokens)
+		if err != nil {
+			return nil, err
+		}
+		u.Cost = calculateCost(u.InputTokens, u.OutputTokens, u.CacheCreationTokens, u.CacheReadTokens)
+		results = append(results, u)
+	}
+
+	return results, rows.Err()
+}
+
+// GetTotalUsage returns total usage for a user, optionally filtered by billing period
+func (db *DB) GetTotalUsage(userID string, billingDay int) (*AggregatedUsage, error) {
 	query := `
 		SELECT
 			SUM(input_tokens) as input_tokens,
@@ -333,9 +517,10 @@ func (db *DB) GetTotalUsage(userID string, resetDate string) (*AggregatedUsage, 
 	`
 	args := []interface{}{userID}
 
-	if resetDate != "" {
+	periodStart, _ := GetBillingPeriod(billingDay)
+	if !periodStart.IsZero() {
 		query += ` AND DATE(timestamp) >= ?`
-		args = append(args, resetDate)
+		args = append(args, periodStart.Format("2006-01-02"))
 	}
 
 	var u AggregatedUsage

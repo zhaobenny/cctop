@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"html/template"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -50,8 +51,10 @@ func (h *Handler) Index(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	usage, _ := h.db.GetUsageByDay(userID, user.ResetDate)
-	total, _ := h.db.GetTotalUsage(userID, user.ResetDate)
+	// Default view is monthly
+	view := "monthly"
+	usage, _ := h.db.GetUsageByMonth(userID)
+	total, _ := h.db.GetTotalUsage(userID, 0)
 
 	// Build server URL from request
 	scheme := "http"
@@ -60,14 +63,20 @@ func (h *Handler) Index(w http.ResponseWriter, r *http.Request) {
 	}
 	serverURL := scheme + "://" + r.Host
 
+	// Calculate billing period
+	periodStart, periodEnd := database.GetBillingPeriod(user.BillingDay)
+
 	h.templates.ExecuteTemplate(w, "index.html", map[string]interface{}{
-		"Content":   "dashboard",
-		"User":      user,
-		"Usage":     usage,
-		"Total":     total,
-		"ResetDate": user.ResetDate,
-		"ServerURL": serverURL,
-		"HasData":   len(usage) > 0,
+		"Content":     "dashboard",
+		"User":        user,
+		"Usage":       usage,
+		"Total":       total,
+		"ServerURL":   serverURL,
+		"HasData":     len(usage) > 0,
+		"View":        view,
+		"BillingDay":  user.BillingDay,
+		"PeriodStart": periodStart,
+		"PeriodEnd":   periodEnd,
 	})
 }
 
@@ -106,7 +115,7 @@ func (h *Handler) Login(w http.ResponseWriter, r *http.Request) {
 	h.sessionMgr.Put(r.Context(), "userID", user.ID)
 
 	// Return dashboard fragment
-	h.renderDashboard(w, r, user)
+	h.renderDashboard(w, user)
 }
 
 // Register handles user registration
@@ -177,7 +186,7 @@ func (h *Handler) Register(w http.ResponseWriter, r *http.Request) {
 	h.sessionMgr.Put(r.Context(), "userID", user.ID)
 
 	// Return dashboard fragment
-	h.renderDashboard(w, r, user)
+	h.renderDashboard(w, user)
 }
 
 // Logout handles user logout
@@ -194,7 +203,7 @@ func (h *Handler) PartialDashboard(w http.ResponseWriter, r *http.Request) {
 		h.templates.ExecuteTemplate(w, "auth.html", nil)
 		return
 	}
-	h.renderDashboard(w, r, user)
+	h.renderDashboard(w, user)
 }
 
 // PartialUsageTable returns the usage table fragment
@@ -205,17 +214,40 @@ func (h *Handler) PartialUsageTable(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	usage, _ := h.db.GetUsageByDay(user.ID, user.ResetDate)
-	total, _ := h.db.GetTotalUsage(user.ID, user.ResetDate)
+	view := r.URL.Query().Get("view")
+	if view == "" {
+		view = "monthly" // default
+	}
+
+	var usage []database.AggregatedUsage
+	var total *database.AggregatedUsage
+
+	switch view {
+	case "monthly":
+		usage, _ = h.db.GetUsageByMonth(user.ID)
+		total, _ = h.db.GetTotalUsage(user.ID, 0)
+	case "billing":
+		usage, _ = h.db.GetUsageByBillingCycle(user.ID, user.BillingDay)
+		total, _ = h.db.GetTotalUsage(user.ID, 0)
+	default: // daily
+		usage, _ = h.db.GetUsageByDay(user.ID, 0)
+		total, _ = h.db.GetTotalUsage(user.ID, 0)
+	}
+
+	periodStart, periodEnd := database.GetBillingPeriod(user.BillingDay)
 
 	h.templates.ExecuteTemplate(w, "usage-table.html", map[string]interface{}{
-		"Usage": usage,
-		"Total": total,
+		"Usage":       usage,
+		"Total":       total,
+		"View":        view,
+		"BillingDay":  user.BillingDay,
+		"PeriodStart": periodStart,
+		"PeriodEnd":   periodEnd,
 	})
 }
 
-// UpdateResetDate handles reset date updates
-func (h *Handler) UpdateResetDate(w http.ResponseWriter, r *http.Request) {
+// UpdateBillingDay handles billing day updates
+func (h *Handler) UpdateBillingDay(w http.ResponseWriter, r *http.Request) {
 	user := auth.GetUser(r.Context())
 	if user == nil {
 		http.Error(w, "Unauthorized", http.StatusUnauthorized)
@@ -227,31 +259,35 @@ func (h *Handler) UpdateResetDate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	resetDate := strings.TrimSpace(r.FormValue("reset_date"))
+	billingDayStr := strings.TrimSpace(r.FormValue("billing_day"))
 
-	// Validate date format if not empty
-	if resetDate != "" {
-		if _, err := time.Parse("2006-01-02", resetDate); err != nil {
-			h.renderError(w, "Invalid date format (use YYYY-MM-DD)")
+	var billingDay int
+	if billingDayStr != "" {
+		var err error
+		billingDay, err = strconv.Atoi(billingDayStr)
+		if err != nil {
+			h.renderError(w, "Invalid billing day")
 			return
+		}
+		// Clamp to valid range
+		if billingDay > 31 {
+			billingDay = 31
+		} else if billingDay < 1 {
+			billingDay = 1
 		}
 	}
 
-	if err := h.db.UpdateUserResetDate(user.ID, resetDate); err != nil {
-		h.renderError(w, "Failed to update reset date")
+	if err := h.db.UpdateUserBillingDay(user.ID, billingDay); err != nil {
+		h.renderError(w, "Failed to update billing day")
 		return
 	}
 
 	// Update user object
-	user.ResetDate = resetDate
+	user.BillingDay = billingDay
 
-	// Return updated usage table
-	usage, _ := h.db.GetUsageByDay(user.ID, resetDate)
-	total, _ := h.db.GetTotalUsage(user.ID, resetDate)
-
-	h.templates.ExecuteTemplate(w, "usage-table.html", map[string]interface{}{
-		"Usage": usage,
-		"Total": total,
+	// Return updated billing section
+	h.templates.ExecuteTemplate(w, "billing-section.html", map[string]interface{}{
+		"BillingDay": billingDay,
 	})
 }
 

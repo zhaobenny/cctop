@@ -1,0 +1,22 @@
+{{define "billing-section.html"}}
+<section id="billing-section">
+    <form hx-post="/settings/billing-day" hx-target="#billing-section" hx-swap="outerHTML" class="flex items-center gap-2 text-sm">
+        <span class="muted">Subscribed on day</span>
+        <input type="number" name="billing_day" value="{{.BillingDay}}" min="1" max="31"
+            class="w-12 px-2 py-1 border border-c bg-transparent text-center"
+            oninput="this.value = Math.min(31, Math.max(1, this.value || 1))"
+            onchange="this.form.requestSubmit();">
+        <span class="muted">of month</span>
+        <span class="htmx-indicator muted">...</span>
+    </form>
+</section>
+<script>
+    // Refresh billing view if active
+    (function() {
+        const billingBtn = document.querySelector('.view-tab.active');
+        if (billingBtn && billingBtn.textContent.trim() === 'Billing') {
+            htmx.ajax('GET', '/partial/usage-table?view=billing', '#usage-table');
+        }
+    })();
+</script>
+{{end}}

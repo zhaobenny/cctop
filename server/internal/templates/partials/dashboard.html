@@ -3,20 +3,64 @@
     {{if not .HasData}}
     {{template "setup-guide.html" .}}
     {{end}}
-    <section>
-        <h2 class="text-xs muted uppercase tracking-wider mb-4">Reset Date</h2>
-        <form hx-post="/settings/reset-date" hx-target="#usage-table" hx-swap="innerHTML" class="flex gap-4 items-end">
-            <input type="date" name="reset_date" value="{{.ResetDate}}" class="px-0 py-2 border-0 border-b border-c focus:border-current">
-            <button type="submit" class="px-4 py-2 border border-c hover:border-current transition text-sm">Set<span class="htmx-indicator"> ...</span></button>
+    {{if not .BillingDay}}
+    <section id="billing-section">
+        <form hx-post="/settings/billing-day" hx-target="#billing-section" hx-swap="outerHTML" class="flex items-center gap-2 text-sm">
+            <span class="muted">Subscribed on day</span>
+            <input type="number" name="billing_day" min="1" max="31" placeholder="—"
+                class="w-12 px-2 py-1 border border-c bg-transparent text-center"
+                oninput="if(this.value) this.value = Math.min(31, Math.max(1, this.value))"
+                onchange="this.form.requestSubmit();">
+            <span class="muted">of month</span>
+            <span class="htmx-indicator muted">...</span>
         </form>
     </section>
+    {{end}}
     <section>
         <div class="flex items-center justify-between mb-4">
-            <h2 class="text-xs muted uppercase tracking-wider">Usage</h2>
-            <button hx-get="/partial/usage-table" hx-target="#usage-table" hx-swap="innerHTML" class="text-xs muted hover:text-current transition">Refresh<span class="htmx-indicator"> ...</span></button>
+            <div class="flex items-center gap-4">
+                <h2 class="text-xs muted uppercase tracking-wider">Usage</h2>
+                <div class="flex gap-1 text-xs" id="view-tabs">
+                    <button hx-get="/partial/usage-table?view=monthly" hx-target="#usage-table" hx-swap="innerHTML"
+                        onclick="setActiveTab(this)"
+                        class="view-tab px-2 py-1 border border-c transition {{if eq .View "monthly"}}active bg-neutral-200 dark:bg-neutral-800{{else}}hover:border-current{{end}}">Monthly</button>
+                    <button hx-get="/partial/usage-table?view=daily" hx-target="#usage-table" hx-swap="innerHTML"
+                        onclick="setActiveTab(this)"
+                        class="view-tab px-2 py-1 border border-c transition {{if eq .View "daily"}}active bg-neutral-200 dark:bg-neutral-800{{else}}hover:border-current{{end}}">Daily</button>
+                    {{if .BillingDay}}
+                    <button hx-get="/partial/usage-table?view=billing" hx-target="#usage-table" hx-swap="innerHTML"
+                        onclick="setActiveTab(this)"
+                        class="view-tab px-2 py-1 border border-c transition {{if eq .View "billing"}}active bg-neutral-200 dark:bg-neutral-800{{else}}hover:border-current{{end}}">Billing</button>
+                    {{end}}
+                </div>
+                <script>
+                function setActiveTab(btn) {
+                    document.querySelectorAll('.view-tab').forEach(t => {
+                        t.classList.remove('active', 'bg-neutral-200', 'dark:bg-neutral-800');
+                        t.classList.add('hover:border-current');
+                    });
+                    btn.classList.add('active', 'bg-neutral-200', 'dark:bg-neutral-800');
+                    btn.classList.remove('hover:border-current');
+                }
+                </script>
+            </div>
+            <span class="htmx-indicator text-xs muted">...</span>
         </div>
         <div id="usage-table">{{template "usage-table.html" .}}</div>
     </section>
+    {{if .BillingDay}}
+    <section id="billing-section">
+        <form hx-post="/settings/billing-day" hx-target="#billing-section" hx-swap="outerHTML" class="flex items-center gap-2 text-sm">
+            <span class="muted">Subscribed on day</span>
+            <input type="number" name="billing_day" value="{{.BillingDay}}" min="1" max="31"
+                class="w-12 px-2 py-1 border border-c bg-transparent text-center"
+                oninput="this.value = Math.min(31, Math.max(1, this.value || 1))"
+                onchange="this.form.requestSubmit();">
+            <span class="muted">of month</span>
+            <span class="htmx-indicator muted">...</span>
+        </form>
+    </section>
+    {{end}}
     {{if .HasData}}
     {{template "setup-guide.html" .}}
     {{end}}
