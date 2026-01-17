@@ -4,8 +4,8 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>cctop</title>
-    <script src="https://unpkg.com/htmx.org@1.9.10"></script>
-    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="/static/htmx.min.js"></script>
+    <link rel="stylesheet" href="/static/tailwind.min.css">
     <style>
         :root { --bg: #fafafa; --fg: #171717; --muted: #737373; --border: #e5e5e5; }
         .dark { --bg: #0a0a0a; --fg: #fafafa; --muted: #a3a3a3; --border: #262626; }
@@ -17,6 +17,10 @@
         .htmx-indicator { display: none; }
         .htmx-request .htmx-indicator { display: inline; }
         .error { color: #dc2626; }
+        .icon-sun { display: none; }
+        .icon-moon { display: block; }
+        .dark .icon-sun { display: block; }
+        .dark .icon-moon { display: none; }
     </style>
 </head>
 <body class="min-h-screen">
@@ -24,7 +28,10 @@
         <header class="flex items-center justify-between mb-16">
             <span class="text-sm tracking-widest uppercase muted">cctop</span>
             <div class="flex items-center gap-6 text-sm">
-                <button onclick="toggleTheme()" class="muted hover:text-current transition">Theme</button>
+                <button onclick="toggleTheme()" class="muted hover:text-current transition" aria-label="Toggle theme">
+                    <svg class="icon-sun w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><circle cx="12" cy="12" r="5"/><path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"/></svg>
+                    <svg class="icon-moon w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M21 12.79A9 9 0 1111.21 3 7 7 0 0021 12.79z"/></svg>
+                </button>
                 {{if eq .Content "dashboard"}}
                 <form hx-post="/logout" hx-target="#content" hx-swap="innerHTML" class="inline">
                     <button type="submit" class="muted hover:text-current transition">Logout</button>
