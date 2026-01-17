@@ -4,16 +4,14 @@ Tracks Claude Code token consumption over time, similar to `ccusage` but in a si
 
 ## Quickstart
 ```bash
-
-cctop 
+sudo curl -fsSL https://github.com/zhaobenny/cctop/releases/latest/download/cctop-linux-amd64 -o /usr/local/bin/cctop && sudo chmod +x /usr/local/bin/cctop
+cctop
 cctop --help
 ```
 
-## Server, sync
-The server is in a different binary, `cctop-server`.
+## Server & Sync
 
+The server is a simple web frontend for displaying synced usage data from multiple machines.
 
-Client:
-```bash
-cctop --sync http://localhost:8080
-```
+Use the provided [Docker Compose](https://raw.githubusercontent.com/zhaobenny/cctop/main/docker-compose.yml) or [`cctop-server` binary](https://github.com/zhaobenny/cctop/releases/latest) to run the server.
+Client configuration is provided in the frontend after registering an new account.

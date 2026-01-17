@@ -1,0 +1,17 @@
+services:
+  cctop-server:
+    image: ghcr.io/zhaobenny/cctop-server:latest
+    ports:
+      - "8080:8080"
+    environment:
+      - ENV=production
+      - PORT=8080
+      - DB_PATH=/data/cctop.db
+    volumes:
+      - ./data:/data
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    restart: unless-stopped
