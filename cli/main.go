@@ -4,6 +4,7 @@ import (
 	"flag"
 	"fmt"
 	"log"
+	"math/rand"
 	"os"
 	"time"
 
@@ -313,6 +314,9 @@ func (s *syncService) run() {
 	for {
 		select {
 		case <-ticker.C:
+			// Add jitter (0-10s) to prevent concurrent syncs from multiple clients
+			jitter := time.Duration(rand.Intn(10)) * time.Second
+			time.Sleep(jitter)
 			s.doSync(client)
 		case <-s.stop:
 			return
