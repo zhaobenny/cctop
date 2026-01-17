@@ -4,9 +4,7 @@ services:
     ports:
       - "8080:8080"
     environment:
-      - ENV=production
-      - PORT=8080
-      - DB_PATH=/data/cctop.db
+      - DB_PATH=./data/cctop.db
       # - DISABLE_REGISTRATION=true
     volumes:
       - ./data:/data
