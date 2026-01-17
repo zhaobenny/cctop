@@ -1,9 +1,11 @@
 {{define "dashboard.html"}}
 <div class="space-y-16">
+    {{if not .HasData}}
+    {{template "setup-guide.html" .}}
+    {{end}}
     <section>
         <h2 class="text-xs muted uppercase tracking-wider mb-4">API Key</h2>
         <code class="block p-4 border border-c text-sm font-mono break-all">{{.User.APIKey}}</code>
-        <p class="text-xs muted mt-3 font-mono">cctop config --server &lt;url&gt; --api-key &lt;key&gt;</p>
     </section>
     <section>
         <h2 class="text-xs muted uppercase tracking-wider mb-4">Reset Date</h2>
@@ -19,5 +21,8 @@
         </div>
         <div id="usage-table">{{template "usage-table.html" .}}</div>
     </section>
+    {{if .HasData}}
+    {{template "setup-guide.html" .}}
+    {{end}}
 </div>
 {{end}}

@@ -53,12 +53,21 @@ func (h *Handler) Index(w http.ResponseWriter, r *http.Request) {
 	usage, _ := h.db.GetUsageByDay(userID, user.ResetDate)
 	total, _ := h.db.GetTotalUsage(userID, user.ResetDate)
 
+	// Build server URL from request
+	scheme := "http"
+	if r.TLS != nil || r.Header.Get("X-Forwarded-Proto") == "https" {
+		scheme = "https"
+	}
+	serverURL := scheme + "://" + r.Host
+
 	h.templates.ExecuteTemplate(w, "index.html", map[string]interface{}{
 		"Content":   "dashboard",
 		"User":      user,
 		"Usage":     usage,
 		"Total":     total,
 		"ResetDate": user.ResetDate,
+		"ServerURL": serverURL,
+		"HasData":   len(usage) > 0,
 	})
 }
 
@@ -97,7 +106,7 @@ func (h *Handler) Login(w http.ResponseWriter, r *http.Request) {
 	h.sessionMgr.Put(r.Context(), "userID", user.ID)
 
 	// Return dashboard fragment
-	h.renderDashboard(w, user)
+	h.renderDashboard(w, r, user)
 }
 
 // Register handles user registration
@@ -168,7 +177,7 @@ func (h *Handler) Register(w http.ResponseWriter, r *http.Request) {
 	h.sessionMgr.Put(r.Context(), "userID", user.ID)
 
 	// Return dashboard fragment
-	h.renderDashboard(w, user)
+	h.renderDashboard(w, r, user)
 }
 
 // Logout handles user logout
@@ -184,7 +193,7 @@ func (h *Handler) PartialDashboard(w http.ResponseWriter, r *http.Request) {
 		h.templates.ExecuteTemplate(w, "auth.html", nil)
 		return
 	}
-	h.renderDashboard(w, user)
+	h.renderDashboard(w, r, user)
 }
 
 // PartialUsageTable returns the usage table fragment
@@ -381,9 +390,16 @@ func (h *Handler) APISyncStatus(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-func (h *Handler) renderDashboard(w http.ResponseWriter, user *database.User) {
+func (h *Handler) renderDashboard(w http.ResponseWriter, r *http.Request, user *database.User) {
 	usage, _ := h.db.GetUsageByDay(user.ID, user.ResetDate)
 	total, _ := h.db.GetTotalUsage(user.ID, user.ResetDate)
+
+	// Build server URL from request
+	scheme := "http"
+	if r.TLS != nil || r.Header.Get("X-Forwarded-Proto") == "https" {
+		scheme = "https"
+	}
+	serverURL := scheme + "://" + r.Host
 
 	// Retarget to #content for successful auth (forms target error div by default)
 	w.Header().Set("HX-Retarget", "#content")
@@ -394,6 +410,8 @@ func (h *Handler) renderDashboard(w http.ResponseWriter, user *database.User) {
 		"Usage":     usage,
 		"Total":     total,
 		"ResetDate": user.ResetDate,
+		"ServerURL": serverURL,
+		"HasData":   len(usage) > 0,
 	})
 }
 
