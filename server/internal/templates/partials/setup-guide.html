@@ -3,25 +3,27 @@
     <h2 class="text-xs muted uppercase tracking-wider mb-4">Setup Guide</h2>
     <p class="text-sm muted mb-6">Run these commands to start syncing your Claude Code usage:</p>
     <div class="space-y-3 font-mono text-sm">
-        <div class="p-3 bg-neutral-100 dark:bg-neutral-900 rounded overflow-x-auto flex justify-between items-center gap-4 group cursor-pointer" onclick="copyCmd(this)">
+        <div class="p-3 bg-neutral-100 dark:bg-neutral-900 rounded overflow-x-auto flex justify-between items-center gap-4 group cursor-pointer"
+            onclick="copyCmd(this)">
             <code>cctop config --server {{.ServerURL}} --api-key {{.User.APIKey}}</code>
             <span class="text-xs muted group-hover:text-current transition shrink-0">copy</span>
         </div>
-        <div class="p-3 bg-neutral-100 dark:bg-neutral-900 rounded overflow-x-auto flex justify-between items-center gap-4 group cursor-pointer" onclick="copyCmd(this)">
-            <code>cctop sync install</code>
+        <div class="p-3 bg-neutral-100 dark:bg-neutral-900 rounded overflow-x-auto flex justify-between items-center gap-4 group cursor-pointer"
+            onclick="copyCmd(this)">
+            <code>sudo cctop sync install</code>
             <span class="text-xs muted group-hover:text-current transition shrink-0">copy</span>
         </div>
     </div>
     <p class="text-xs muted mt-4">This installs a background service that syncs your usage data automatically.</p>
 </section>
 <script>
-function copyCmd(el) {
-    const code = el.querySelector('code').textContent;
-    navigator.clipboard.writeText(code);
-    const hint = el.querySelector('span');
-    const orig = hint.textContent;
-    hint.textContent = 'copied!';
-    setTimeout(() => hint.textContent = orig, 1500);
-}
+    function copyCmd(el) {
+        const code = el.querySelector('code').textContent;
+        navigator.clipboard.writeText(code);
+        const hint = el.querySelector('span');
+        const orig = hint.textContent;
+        hint.textContent = 'copied!';
+        setTimeout(() => hint.textContent = orig, 1500);
+    }
 </script>
 {{end}}
