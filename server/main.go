@@ -18,6 +18,8 @@ import (
 	"github.com/zhaobenny/cctop/server/internal/templates"
 )
 
+var version = "dev"
+
 func main() {
 	// Load configuration from environment
 	port := getEnv("PORT", "8080")
@@ -91,7 +93,7 @@ func main() {
 
 	// Start server
 	addr := ":" + port
-	log.Printf("Starting cctop-server on %s", addr)
+	log.Printf("Starting cctop-server %s on %s", version, addr)
 	log.Printf("Database: %s", dbPath)
 
 	if err := http.ListenAndServe(addr, handler); err != nil {

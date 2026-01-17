@@ -1,5 +1,7 @@
 FROM golang:1.21-alpine AS builder
 
+ARG VERSION=dev
+
 # Install build dependencies for CGO (required for SQLite)
 RUN apk add --no-cache gcc musl-dev
 
@@ -16,7 +18,7 @@ COPY . .
 
 # Build fully static binary with musl
 RUN CGO_ENABLED=1 GOOS=linux go build \
-    -ldflags="-s -w -linkmode external -extldflags '-static'" \
+    -ldflags="-s -w -X main.version=${VERSION} -linkmode external -extldflags '-static'" \
     -o cctop-server ./server
 
 # Final stage - scratch image

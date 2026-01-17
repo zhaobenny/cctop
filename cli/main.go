@@ -16,7 +16,7 @@ import (
 	"github.com/zhaobenny/cctop/cli/internal/parser"
 )
 
-const version = "0.2.0"
+var version = "dev"
 
 func main() {
 	// Detect subcommand first
