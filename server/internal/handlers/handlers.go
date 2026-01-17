@@ -183,7 +183,8 @@ func (h *Handler) Register(w http.ResponseWriter, r *http.Request) {
 // Logout handles user logout
 func (h *Handler) Logout(w http.ResponseWriter, r *http.Request) {
 	h.sessionMgr.Destroy(r.Context())
-	h.templates.ExecuteTemplate(w, "auth.html", nil)
+	// Redirect to refresh the full page (header needs to hide username/logout)
+	w.Header().Set("HX-Redirect", "/")
 }
 
 // PartialDashboard returns the dashboard fragment
@@ -390,29 +391,9 @@ func (h *Handler) APISyncStatus(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-func (h *Handler) renderDashboard(w http.ResponseWriter, r *http.Request, user *database.User) {
-	usage, _ := h.db.GetUsageByDay(user.ID, user.ResetDate)
-	total, _ := h.db.GetTotalUsage(user.ID, user.ResetDate)
-
-	// Build server URL from request
-	scheme := "http"
-	if r.TLS != nil || r.Header.Get("X-Forwarded-Proto") == "https" {
-		scheme = "https"
-	}
-	serverURL := scheme + "://" + r.Host
-
-	// Retarget to #content for successful auth (forms target error div by default)
-	w.Header().Set("HX-Retarget", "#content")
-	w.Header().Set("HX-Reswap", "innerHTML")
-
-	h.templates.ExecuteTemplate(w, "dashboard.html", map[string]interface{}{
-		"User":      user,
-		"Usage":     usage,
-		"Total":     total,
-		"ResetDate": user.ResetDate,
-		"ServerURL": serverURL,
-		"HasData":   len(usage) > 0,
-	})
+func (h *Handler) renderDashboard(w http.ResponseWriter, user *database.User) {
+	// Redirect to refresh the full page (header needs to update with username/logout)
+	w.Header().Set("HX-Redirect", "/")
 }
 
 func (h *Handler) renderError(w http.ResponseWriter, message string) {

@@ -33,10 +33,12 @@
                     <svg class="icon-moon w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M21 12.79A9 9 0 1111.21 3 7 7 0 0021 12.79z"/></svg>
                 </button>
                 {{if eq .Content "dashboard"}}
+                <span class="text-sm">{{.User.Username}}</span>
+                <span class="muted">·</span>
                 <form hx-post="/logout" hx-target="#content" hx-swap="innerHTML" class="inline">
                     <button type="submit" class="muted hover:text-current transition">Logout</button>
                 </form>
-                {{end}}
+            {{end}}
             </div>
         </header>
         <div id="content">
