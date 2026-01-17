@@ -24,13 +24,13 @@
             </tr>
             {{end}}
             {{if .Total}}
-            <tr>
-                <td class="py-3 font-medium">Total</td>
-                <td class="text-right py-3 font-mono font-medium">{{formatNumber .Total.InputTokens}}</td>
-                <td class="text-right py-3 font-mono font-medium">{{formatNumber .Total.OutputTokens}}</td>
-                <td class="text-right py-3 font-mono font-medium">{{formatNumber .Total.CacheCreationTokens}}</td>
-                <td class="text-right py-3 font-mono font-medium">{{formatNumber .Total.CacheReadTokens}}</td>
-                <td class="text-right py-3 font-mono font-medium">{{formatCost .Total.Cost}}</td>
+            <tr class="border-t-2 border-c">
+                <td class="py-3 font-semibold">Total</td>
+                <td class="text-right py-3 font-mono font-semibold">{{formatNumber .Total.InputTokens}}</td>
+                <td class="text-right py-3 font-mono font-semibold">{{formatNumber .Total.OutputTokens}}</td>
+                <td class="text-right py-3 font-mono font-semibold">{{formatNumber .Total.CacheCreationTokens}}</td>
+                <td class="text-right py-3 font-mono font-semibold">{{formatNumber .Total.CacheReadTokens}}</td>
+                <td class="text-right py-3 font-mono font-semibold">{{formatCost .Total.Cost}}</td>
             </tr>
             {{end}}
         </tbody>
