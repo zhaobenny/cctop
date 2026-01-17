@@ -1,0 +1,50 @@
+{{define "auth.html"}}
+<div class="max-w-xs mx-auto mt-8">
+    <div class="flex gap-8 mb-8 text-sm">
+        <button onclick="showTab('login')" id="login-btn" class="pb-1 border-b border-current">Login</button>
+        <button onclick="showTab('register')" id="register-btn" class="pb-1 border-b border-transparent muted hover:text-current transition">Register</button>
+    </div>
+    <div id="login-tab">
+        <form hx-post="/login" hx-target="#login-error" hx-swap="innerHTML" class="space-y-6">
+            <div id="login-error"></div>
+            <div>
+                <label class="block text-xs muted mb-2 uppercase tracking-wider">Username</label>
+                <input type="text" name="username" required autocomplete="username" class="w-full px-0 py-2 border-0 border-b border-c focus:border-current">
+            </div>
+            <div>
+                <label class="block text-xs muted mb-2 uppercase tracking-wider">Password</label>
+                <input type="password" name="password" required autocomplete="current-password" class="w-full px-0 py-2 border-0 border-b border-c focus:border-current">
+            </div>
+            <button type="submit" class="w-full py-3 border border-c hover:border-current transition text-sm">Sign In<span class="htmx-indicator"> ...</span></button>
+        </form>
+    </div>
+    <div id="register-tab" class="hidden">
+        <form hx-post="/register" hx-target="#register-error" hx-swap="innerHTML" class="space-y-6">
+            <div id="register-error"></div>
+            <div>
+                <label class="block text-xs muted mb-2 uppercase tracking-wider">Username</label>
+                <input type="text" name="username" required minlength="3" autocomplete="username" class="w-full px-0 py-2 border-0 border-b border-c focus:border-current">
+                <p class="text-xs muted mt-1">min 3 characters</p>
+            </div>
+            <div>
+                <label class="block text-xs muted mb-2 uppercase tracking-wider">Password</label>
+                <input type="password" name="password" required minlength="8" autocomplete="new-password" class="w-full px-0 py-2 border-0 border-b border-c focus:border-current">
+                <p class="text-xs muted mt-1">min 8 characters</p>
+            </div>
+            <button type="submit" class="w-full py-3 border border-c hover:border-current transition text-sm">Create Account<span class="htmx-indicator"> ...</span></button>
+        </form>
+    </div>
+</div>
+<script>
+function showTab(tab) {
+    document.getElementById('login-tab').classList.toggle('hidden', tab !== 'login');
+    document.getElementById('register-tab').classList.toggle('hidden', tab !== 'register');
+    document.getElementById('login-btn').classList.toggle('border-current', tab === 'login');
+    document.getElementById('login-btn').classList.toggle('border-transparent', tab !== 'login');
+    document.getElementById('login-btn').classList.toggle('muted', tab !== 'login');
+    document.getElementById('register-btn').classList.toggle('border-current', tab === 'register');
+    document.getElementById('register-btn').classList.toggle('border-transparent', tab !== 'register');
+    document.getElementById('register-btn').classList.toggle('muted', tab !== 'register');
+}
+</script>
+{{end}}

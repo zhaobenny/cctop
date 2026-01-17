@@ -1,0 +1,21 @@
+# Binaries
+cctop
+cctop-server
+
+# Database files
+*.db
+*.db-wal
+*.db-shm
+
+# Environment files
+.env
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db

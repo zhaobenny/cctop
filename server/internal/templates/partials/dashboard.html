@@ -1,0 +1,23 @@
+{{define "dashboard.html"}}
+<div class="space-y-16">
+    <section>
+        <h2 class="text-xs muted uppercase tracking-wider mb-4">API Key</h2>
+        <code class="block p-4 border border-c text-sm font-mono break-all">{{.User.APIKey}}</code>
+        <p class="text-xs muted mt-3 font-mono">cctop config --server &lt;url&gt; --api-key &lt;key&gt;</p>
+    </section>
+    <section>
+        <h2 class="text-xs muted uppercase tracking-wider mb-4">Reset Date</h2>
+        <form hx-post="/settings/reset-date" hx-target="#usage-table" hx-swap="innerHTML" class="flex gap-4 items-end">
+            <input type="date" name="reset_date" value="{{.ResetDate}}" class="px-0 py-2 border-0 border-b border-c focus:border-current">
+            <button type="submit" class="px-4 py-2 border border-c hover:border-current transition text-sm">Set<span class="htmx-indicator"> ...</span></button>
+        </form>
+    </section>
+    <section>
+        <div class="flex items-center justify-between mb-4">
+            <h2 class="text-xs muted uppercase tracking-wider">Usage</h2>
+            <button hx-get="/partial/usage-table" hx-target="#usage-table" hx-swap="innerHTML" class="text-xs muted hover:text-current transition">Refresh<span class="htmx-indicator"> ...</span></button>
+        </div>
+        <div id="usage-table">{{template "usage-table.html" .}}</div>
+    </section>
+</div>
+{{end}}

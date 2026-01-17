@@ -1,0 +1,49 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>cctop</title>
+    <script src="https://unpkg.com/htmx.org@1.9.10"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        :root { --bg: #fafafa; --fg: #171717; --muted: #737373; --border: #e5e5e5; }
+        .dark { --bg: #0a0a0a; --fg: #fafafa; --muted: #a3a3a3; --border: #262626; }
+        body { background: var(--bg); color: var(--fg); }
+        .muted { color: var(--muted); }
+        .border-c { border-color: var(--border); }
+        input { background: var(--bg); color: var(--fg); border-color: var(--border); }
+        input:focus { outline: none; border-color: var(--fg); }
+        .htmx-indicator { display: none; }
+        .htmx-request .htmx-indicator { display: inline; }
+        .error { color: #dc2626; }
+    </style>
+</head>
+<body class="min-h-screen">
+    <div class="max-w-2xl mx-auto px-6 py-12">
+        <header class="flex items-center justify-between mb-16">
+            <span class="text-sm tracking-widest uppercase muted">cctop</span>
+            <div class="flex items-center gap-6 text-sm">
+                <button onclick="toggleTheme()" class="muted hover:text-current transition">Theme</button>
+                {{if eq .Content "dashboard"}}
+                <form hx-post="/logout" hx-target="#content" hx-swap="innerHTML" class="inline">
+                    <button type="submit" class="muted hover:text-current transition">Logout</button>
+                </form>
+                {{end}}
+            </div>
+        </header>
+        <div id="content">
+            {{if eq .Content "auth"}}{{template "auth.html" .}}{{else if eq .Content "dashboard"}}{{template "dashboard.html" .}}{{end}}
+        </div>
+    </div>
+    <script>
+        function toggleTheme() {
+            document.documentElement.classList.toggle('dark');
+            localStorage.setItem('theme', document.documentElement.classList.contains('dark') ? 'dark' : 'light');
+        }
+        if (localStorage.getItem('theme') === 'dark' || (!localStorage.getItem('theme') && window.matchMedia('(prefers-color-scheme: dark)').matches)) {
+            document.documentElement.classList.add('dark');
+        }
+    </script>
+</body>
+</html>
