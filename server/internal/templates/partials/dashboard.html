@@ -4,10 +4,6 @@
     {{template "setup-guide.html" .}}
     {{end}}
     <section>
-        <h2 class="text-xs muted uppercase tracking-wider mb-4">API Key</h2>
-        <code class="block p-4 border border-c text-sm font-mono break-all">{{.User.APIKey}}</code>
-    </section>
-    <section>
         <h2 class="text-xs muted uppercase tracking-wider mb-4">Reset Date</h2>
         <form hx-post="/settings/reset-date" hx-target="#usage-table" hx-swap="innerHTML" class="flex gap-4 items-end">
             <input type="date" name="reset_date" value="{{.ResetDate}}" class="px-0 py-2 border-0 border-b border-c focus:border-current">
