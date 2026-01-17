@@ -45,8 +45,8 @@ func main() {
 	// Setup session manager with SQLite store
 	sessionMgr := scs.New()
 	sessionMgr.Store = sqlite3store.New(db.DB)
-	sessionMgr.Lifetime = 7 * 24 * time.Hour
-	sessionMgr.Cookie.Secure = isProduction()
+	sessionMgr.Lifetime = 6 * 30 * 24 * time.Hour // ~6 months
+	sessionMgr.Cookie.Secure = !isDevelopment()
 	sessionMgr.Cookie.SameSite = http.SameSiteLaxMode
 
 	// Setup rate limiter for auth endpoints (5 requests per minute, burst of 5)
@@ -59,7 +59,8 @@ func main() {
 	}
 
 	// Create handlers
-	h := handlers.New(db, sessionMgr, tmpl)
+	disableRegistration := isEnvTrue("DISABLE_REGISTRATION")
+	h := handlers.New(db, sessionMgr, tmpl, disableRegistration)
 	authMiddleware := auth.NewMiddleware(db, sessionMgr)
 
 	// Setup routes
@@ -123,7 +124,12 @@ func getDBPath() string {
 	return filepath.Join(configDir, "cctop-server", "cctop.db")
 }
 
-func isProduction() bool {
+func isDevelopment() bool {
 	env := strings.ToLower(os.Getenv("ENV"))
-	return env == "production" || env == "prod"
+	return env == "development" || env == "dev"
+}
+
+func isEnvTrue(key string) bool {
+	val := strings.ToLower(os.Getenv(key))
+	return val == "true" || val == "1" || val == "yes"
 }

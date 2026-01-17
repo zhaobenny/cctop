@@ -7,6 +7,7 @@ services:
       - ENV=production
       - PORT=8080
       - DB_PATH=/data/cctop.db
+      # - DISABLE_REGISTRATION=true
     volumes:
       - ./data:/data
     read_only: true

@@ -15,17 +15,21 @@ import (
 
 // Handler holds dependencies for HTTP handlers
 type Handler struct {
-	db         *database.DB
-	sessionMgr *scs.SessionManager
-	templates  *template.Template
+	db                  *database.DB
+	sessionMgr          *scs.SessionManager
+	templates           *template.Template
+	disableRegistration bool
+	debouncer           *SummaryDebouncer
 }
 
 // New creates a new Handler
-func New(db *database.DB, sessionMgr *scs.SessionManager, templates *template.Template) *Handler {
+func New(db *database.DB, sessionMgr *scs.SessionManager, templates *template.Template, disableRegistration bool) *Handler {
 	return &Handler{
-		db:         db,
-		sessionMgr: sessionMgr,
-		templates:  templates,
+		db:                  db,
+		sessionMgr:          sessionMgr,
+		templates:           templates,
+		disableRegistration: disableRegistration,
+		debouncer:           NewSummaryDebouncer(db, time.Minute),
 	}
 }
 
@@ -36,7 +40,8 @@ func (h *Handler) Index(w http.ResponseWriter, r *http.Request) {
 	if userID == "" {
 		// Not logged in - show auth page
 		h.templates.ExecuteTemplate(w, "index.html", map[string]interface{}{
-			"Content": "auth",
+			"Content":             "auth",
+			"DisableRegistration": h.disableRegistration,
 		})
 		return
 	}
@@ -46,7 +51,8 @@ func (h *Handler) Index(w http.ResponseWriter, r *http.Request) {
 	if err != nil || user == nil {
 		h.sessionMgr.Destroy(r.Context())
 		h.templates.ExecuteTemplate(w, "index.html", map[string]interface{}{
-			"Content": "auth",
+			"Content":             "auth",
+			"DisableRegistration": h.disableRegistration,
 		})
 		return
 	}
@@ -82,7 +88,9 @@ func (h *Handler) Index(w http.ResponseWriter, r *http.Request) {
 
 // PartialAuth returns the auth form fragment
 func (h *Handler) PartialAuth(w http.ResponseWriter, r *http.Request) {
-	h.templates.ExecuteTemplate(w, "auth.html", nil)
+	h.templates.ExecuteTemplate(w, "auth.html", map[string]interface{}{
+		"DisableRegistration": h.disableRegistration,
+	})
 }
 
 // Login handles user login
@@ -120,6 +128,11 @@ func (h *Handler) Login(w http.ResponseWriter, r *http.Request) {
 
 // Register handles user registration
 func (h *Handler) Register(w http.ResponseWriter, r *http.Request) {
+	if h.disableRegistration {
+		h.renderError(w, "Registration is disabled")
+		return
+	}
+
 	if err := r.ParseForm(); err != nil {
 		h.renderError(w, "Invalid form data")
 		return
@@ -386,9 +399,13 @@ func (h *Handler) APISync(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Update summaries for affected periods only
+	// Update summaries - immediate if no existing summaries, debounced otherwise
 	if inserted > 0 {
-		h.db.UpdateSummaries(user.ID, user.BillingDay, records)
+		if h.db.HasSummaries(user.ID) {
+			h.debouncer.Schedule(user.ID, user.BillingDay, records)
+		} else {
+			h.db.UpdateSummaries(user.ID, user.BillingDay, records)
+		}
 	}
 
 	// Update last sync time
