@@ -36,7 +36,7 @@ func CheckPassword(password, hash string) bool {
 
 // GenerateAPIKey generates a random API key
 func GenerateAPIKey() (string, error) {
-	bytes := make([]byte, 32)
+	bytes := make([]byte, 16)
 	if _, err := rand.Read(bytes); err != nil {
 		return "", err
 	}
