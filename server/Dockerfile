@@ -14,22 +14,29 @@ RUN go mod download
 # Copy source code
 COPY . .
 
-# Build the server binary with CGO enabled
-RUN CGO_ENABLED=1 GOOS=linux go build -ldflags="-s -w" -o cctop-server ./server
+# Build fully static binary with musl
+RUN CGO_ENABLED=1 GOOS=linux go build \
+    -ldflags="-s -w -linkmode external -extldflags '-static'" \
+    -o cctop-server ./server
 
-# Final stage
-FROM alpine:3.19
+# Final stage - scratch image
+FROM scratch
 
-# Install runtime dependencies
-RUN apk --no-cache add ca-certificates
+# Import user/group for non-root execution
+COPY --from=builder /etc/passwd /etc/passwd
+COPY --from=builder /etc/group /etc/group
 
-WORKDIR /app
+# Copy CA certificates for HTTPS
+COPY --from=builder /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/
 
-# Copy the binary
-COPY --from=builder /app/cctop-server /app/cctop-server
+# Copy the static binary
+COPY --from=builder /app/cctop-server /cctop-server
 
-# Create data directory for SQLite
-RUN mkdir -p /data
+# Create data directory with correct ownership
+COPY --chown=nobody:nogroup --from=builder /tmp /data
+
+# Run as non-root
+USER nobody:nogroup
 
 # Default environment
 ENV PORT=8080
@@ -37,4 +44,4 @@ ENV DB_PATH=/data/cctop.db
 
 EXPOSE 8080
 
-ENTRYPOINT ["/app/cctop-server"]
+ENTRYPOINT ["/cctop-server"]
