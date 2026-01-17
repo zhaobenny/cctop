@@ -1,9 +1,12 @@
 package main
 
 import (
+	"io/fs"
 	"log"
 	"net/http"
 	"os"
+	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/alexedwards/scs/sqlite3store"
@@ -11,13 +14,19 @@ import (
 	"github.com/zhaobenny/cctop/server/internal/auth"
 	"github.com/zhaobenny/cctop/server/internal/database"
 	"github.com/zhaobenny/cctop/server/internal/handlers"
+	"github.com/zhaobenny/cctop/server/internal/middleware"
 	"github.com/zhaobenny/cctop/server/internal/templates"
 )
 
 func main() {
 	// Load configuration from environment
 	port := getEnv("PORT", "8080")
-	dbPath := getEnv("DB_PATH", "./cctop.db")
+	dbPath := getDBPath()
+
+	// Ensure database directory exists
+	if err := os.MkdirAll(filepath.Dir(dbPath), 0755); err != nil {
+		log.Fatalf("Failed to create database directory: %v", err)
+	}
 
 	// Open database
 	db, err := database.Open(dbPath)
@@ -35,8 +44,11 @@ func main() {
 	sessionMgr := scs.New()
 	sessionMgr.Store = sqlite3store.New(db.DB)
 	sessionMgr.Lifetime = 7 * 24 * time.Hour
-	sessionMgr.Cookie.Secure = false // Set to true in production with HTTPS
+	sessionMgr.Cookie.Secure = isProduction()
 	sessionMgr.Cookie.SameSite = http.SameSiteLaxMode
+
+	// Setup rate limiter for auth endpoints (5 requests per minute, burst of 5)
+	authLimiter := middleware.NewIPRateLimiter(5.0/60.0, 5)
 
 	// Parse templates
 	tmpl, err := templates.Parse()
@@ -51,11 +63,18 @@ func main() {
 	// Setup routes
 	mux := http.NewServeMux()
 
+	// Health check (for orchestrators)
+	mux.HandleFunc("/health", h.Health)
+
+	// Static files (embedded)
+	staticSub, _ := fs.Sub(staticFS, "static")
+	mux.Handle("/static/", http.StripPrefix("/static/", http.FileServer(http.FS(staticSub))))
+
 	// Public routes
 	mux.HandleFunc("/", h.Index)
 	mux.HandleFunc("/partial/auth", h.PartialAuth)
-	mux.HandleFunc("/login", h.Login)
-	mux.HandleFunc("/register", h.Register)
+	mux.Handle("/login", authLimiter.LimitFunc(h.Login))
+	mux.Handle("/register", authLimiter.LimitFunc(h.Register))
 
 	// Protected routes (session-based)
 	mux.Handle("/logout", authMiddleware.RequireAuth(http.HandlerFunc(h.Logout)))
@@ -67,8 +86,8 @@ func main() {
 	mux.Handle("/api/sync", authMiddleware.RequireAPIKey(http.HandlerFunc(h.APISync)))
 	mux.Handle("/api/sync/status", authMiddleware.RequireAPIKey(http.HandlerFunc(h.APISyncStatus)))
 
-	// Wrap with session middleware
-	handler := sessionMgr.LoadAndSave(mux)
+	// Wrap with session middleware and security headers
+	handler := middleware.SecurityHeaders(sessionMgr.LoadAndSave(mux))
 
 	// Start server
 	addr := ":" + port
@@ -85,4 +104,24 @@ func getEnv(key, defaultValue string) string {
 		return value
 	}
 	return defaultValue
+}
+
+func getDBPath() string {
+	// Env var takes precedence (for Docker, custom deployments)
+	if path := os.Getenv("DB_PATH"); path != "" {
+		return path
+	}
+
+	// Fall back to user config dir
+	configDir, err := os.UserConfigDir()
+	if err != nil {
+		return "./cctop.db"
+	}
+
+	return filepath.Join(configDir, "cctop-server", "cctop.db")
+}
+
+func isProduction() bool {
+	env := strings.ToLower(os.Getenv("ENV"))
+	return env == "production" || env == "prod"
 }
