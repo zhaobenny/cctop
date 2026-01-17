@@ -66,6 +66,16 @@ func Open(dbPath string) (*DB, error) {
 		return nil, fmt.Errorf("failed to enable WAL mode: %w", err)
 	}
 
+	// Set busy timeout to avoid "database is locked" errors under concurrent load
+	if _, err := db.Exec("PRAGMA busy_timeout = 5000"); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("failed to set busy timeout: %w", err)
+	}
+
+	// Configure connection pool
+	db.SetMaxOpenConns(10)
+	db.SetMaxIdleConns(5)
+
 	return &DB{db}, nil
 }
 
@@ -116,6 +126,22 @@ func (db *DB) Migrate() error {
 	);
 
 	CREATE INDEX IF NOT EXISTS idx_sessions_expiry ON sessions(expiry);
+
+	CREATE TABLE IF NOT EXISTS usage_summary (
+		user_id TEXT NOT NULL,
+		period_type TEXT NOT NULL,
+		period_key TEXT NOT NULL,
+		period_start TIMESTAMP NOT NULL,
+		period_end TIMESTAMP NOT NULL,
+		input_tokens INTEGER NOT NULL,
+		output_tokens INTEGER NOT NULL,
+		cache_creation_tokens INTEGER NOT NULL,
+		cache_read_tokens INTEGER NOT NULL,
+		PRIMARY KEY (user_id, period_type, period_key),
+		FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+	);
+
+	CREATE INDEX IF NOT EXISTS idx_summary_user_type ON usage_summary(user_id, period_type);
 	`
 
 	_, err := db.Exec(schema)
@@ -335,44 +361,63 @@ func GetBillingPeriod(billingDay int) (time.Time, time.Time) {
 
 // GetUsageByDay returns daily usage for a user, optionally filtered by billing period
 func (db *DB) GetUsageByDay(userID string, billingDay int) ([]AggregatedUsage, error) {
-	query := `
-		SELECT
-			DATE(timestamp) as period,
-			SUM(input_tokens) as input_tokens,
-			SUM(output_tokens) as output_tokens,
-			SUM(cache_creation_tokens) as cache_creation_tokens,
-			SUM(cache_read_tokens) as cache_read_tokens
-		FROM usage_records
-		WHERE user_id = ?
-	`
-	args := []interface{}{userID}
-
+	now := time.Now()
+	today := now.Format("2006-01-02")
 	periodStart, _ := GetBillingPeriod(billingDay)
+
+	var results []AggregatedUsage
+
+	// Get completed days from summary table
+	summaryQuery := `
+		SELECT period_key, input_tokens, output_tokens, cache_creation_tokens, cache_read_tokens
+		FROM usage_summary
+		WHERE user_id = ? AND period_type = 'day' AND period_key != ?
+	`
+	args := []interface{}{userID, today}
 	if !periodStart.IsZero() {
-		query += ` AND DATE(timestamp) >= ?`
-		args = append(args, periodStart.Format("2006-01-02"))
+		summaryQuery += ` AND period_start >= ?`
+		args = append(args, periodStart)
 	}
+	summaryQuery += ` ORDER BY period_key DESC LIMIT 30`
 
-	query += ` GROUP BY DATE(timestamp) ORDER BY period DESC LIMIT 30`
-
-	rows, err := db.Query(query, args...)
+	rows, err := db.Query(summaryQuery, args...)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 
-	var results []AggregatedUsage
 	for rows.Next() {
 		var u AggregatedUsage
-		err := rows.Scan(&u.Period, &u.InputTokens, &u.OutputTokens, &u.CacheCreationTokens, &u.CacheReadTokens)
-		if err != nil {
+		if err := rows.Scan(&u.Period, &u.InputTokens, &u.OutputTokens, &u.CacheCreationTokens, &u.CacheReadTokens); err != nil {
 			return nil, err
 		}
 		u.Cost = calculateCost(u.InputTokens, u.OutputTokens, u.CacheCreationTokens, u.CacheReadTokens)
 		results = append(results, u)
 	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
 
-	return results, rows.Err()
+	// Get today's data from raw records
+	var todayUsage AggregatedUsage
+	todayUsage.Period = today
+	err = db.QueryRow(`
+		SELECT COALESCE(SUM(input_tokens), 0), COALESCE(SUM(output_tokens), 0),
+		       COALESCE(SUM(cache_creation_tokens), 0), COALESCE(SUM(cache_read_tokens), 0)
+		FROM usage_records
+		WHERE user_id = ? AND DATE(timestamp) = ?
+	`, userID, today).Scan(&todayUsage.InputTokens, &todayUsage.OutputTokens, &todayUsage.CacheCreationTokens, &todayUsage.CacheReadTokens)
+	if err != nil {
+		return nil, err
+	}
+
+	// Only include today if there's data
+	if todayUsage.InputTokens > 0 || todayUsage.OutputTokens > 0 {
+		todayUsage.Cost = calculateCost(todayUsage.InputTokens, todayUsage.OutputTokens, todayUsage.CacheCreationTokens, todayUsage.CacheReadTokens)
+		results = append([]AggregatedUsage{todayUsage}, results...)
+	}
+
+	return results, nil
 }
 
 // GetUsageByBillingCycle returns usage grouped by billing cycles
@@ -381,160 +426,155 @@ func (db *DB) GetUsageByBillingCycle(userID string, billingDay int) ([]Aggregate
 		return nil, nil
 	}
 
-	// Get all usage records and group them by billing cycle in Go
-	// This is simpler than complex SQL for billing cycle boundaries
-	query := `
-		SELECT
-			DATE(timestamp) as day,
-			SUM(input_tokens) as input_tokens,
-			SUM(output_tokens) as output_tokens,
-			SUM(cache_creation_tokens) as cache_creation_tokens,
-			SUM(cache_read_tokens) as cache_read_tokens
-		FROM usage_records
-		WHERE user_id = ?
-		GROUP BY DATE(timestamp)
-		ORDER BY day ASC
-	`
+	// Get current cycle info
+	cycleStart, cycleEnd := GetBillingPeriod(billingDay)
+	currentCycleKey := cycleStart.Format("Jan 2") + " – " + cycleEnd.Format("Jan 2")
 
-	rows, err := db.Query(query, userID)
+	var results []AggregatedUsage
+
+	// Get completed cycles from summary table (where period_end < now)
+	rows, err := db.Query(`
+		SELECT period_key, input_tokens, output_tokens, cache_creation_tokens, cache_read_tokens
+		FROM usage_summary
+		WHERE user_id = ? AND period_type = 'cycle' AND period_key != ?
+		ORDER BY period_start DESC
+	`, userID, currentCycleKey)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 
-	// Map to accumulate usage per billing cycle
-	cycles := make(map[string]*AggregatedUsage)
-	var cycleOrder []string
-
-	for rows.Next() {
-		var day string
-		var input, output, cacheCreate, cacheRead int64
-		if err := rows.Scan(&day, &input, &output, &cacheCreate, &cacheRead); err != nil {
-			return nil, err
-		}
-
-		// Parse the day and find which billing cycle it belongs to
-		t, _ := time.Parse("2006-01-02", day)
-		year, month, dayNum := t.Date()
-
-		// Determine billing cycle start
-		var cycleStart time.Time
-		clampedDay := clampDay(year, month, billingDay)
-		if dayNum >= clampedDay {
-			cycleStart = time.Date(year, month, clampedDay, 0, 0, 0, 0, t.Location())
-		} else {
-			prevMonth := month - 1
-			prevYear := year
-			if prevMonth < 1 {
-				prevMonth = 12
-				prevYear--
-			}
-			clampedDay = clampDay(prevYear, prevMonth, billingDay)
-			cycleStart = time.Date(prevYear, prevMonth, clampedDay, 0, 0, 0, 0, t.Location())
-		}
-
-		// Calculate cycle end
-		nextMonth := cycleStart.Month() + 1
-		nextYear := cycleStart.Year()
-		if nextMonth > 12 {
-			nextMonth = 1
-			nextYear++
-		}
-		cycleEndDay := clampDay(nextYear, nextMonth, billingDay)
-		cycleEnd := time.Date(nextYear, nextMonth, cycleEndDay, 0, 0, 0, 0, t.Location()).Add(-time.Second)
-
-		// Format as "Jan 17 – Feb 16"
-		cycleKey := cycleStart.Format("Jan 2") + " – " + cycleEnd.Format("Jan 2")
-
-		if _, exists := cycles[cycleKey]; !exists {
-			cycles[cycleKey] = &AggregatedUsage{Period: cycleKey}
-			cycleOrder = append(cycleOrder, cycleKey)
-		}
-
-		cycles[cycleKey].InputTokens += input
-		cycles[cycleKey].OutputTokens += output
-		cycles[cycleKey].CacheCreationTokens += cacheCreate
-		cycles[cycleKey].CacheReadTokens += cacheRead
-	}
-
-	// Build result in reverse order (newest first)
-	var results []AggregatedUsage
-	for i := len(cycleOrder) - 1; i >= 0; i-- {
-		u := cycles[cycleOrder[i]]
-		u.Cost = calculateCost(u.InputTokens, u.OutputTokens, u.CacheCreationTokens, u.CacheReadTokens)
-		results = append(results, *u)
-	}
-
-	return results, rows.Err()
-}
-
-// GetUsageByMonth returns monthly usage for a user
-func (db *DB) GetUsageByMonth(userID string) ([]AggregatedUsage, error) {
-	query := `
-		SELECT
-			strftime('%Y-%m', timestamp) as period,
-			SUM(input_tokens) as input_tokens,
-			SUM(output_tokens) as output_tokens,
-			SUM(cache_creation_tokens) as cache_creation_tokens,
-			SUM(cache_read_tokens) as cache_read_tokens
-		FROM usage_records
-		WHERE user_id = ?
-		GROUP BY strftime('%Y-%m', timestamp)
-		ORDER BY period DESC
-		LIMIT 12
-	`
-
-	rows, err := db.Query(query, userID)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-
-	var results []AggregatedUsage
 	for rows.Next() {
 		var u AggregatedUsage
-		err := rows.Scan(&u.Period, &u.InputTokens, &u.OutputTokens, &u.CacheCreationTokens, &u.CacheReadTokens)
-		if err != nil {
+		if err := rows.Scan(&u.Period, &u.InputTokens, &u.OutputTokens, &u.CacheCreationTokens, &u.CacheReadTokens); err != nil {
 			return nil, err
 		}
 		u.Cost = calculateCost(u.InputTokens, u.OutputTokens, u.CacheCreationTokens, u.CacheReadTokens)
 		results = append(results, u)
 	}
-
-	return results, rows.Err()
-}
-
-// GetTotalUsage returns total usage for a user, optionally filtered by billing period
-func (db *DB) GetTotalUsage(userID string, billingDay int) (*AggregatedUsage, error) {
-	query := `
-		SELECT
-			SUM(input_tokens) as input_tokens,
-			SUM(output_tokens) as output_tokens,
-			SUM(cache_creation_tokens) as cache_creation_tokens,
-			SUM(cache_read_tokens) as cache_read_tokens
-		FROM usage_records
-		WHERE user_id = ?
-	`
-	args := []interface{}{userID}
-
-	periodStart, _ := GetBillingPeriod(billingDay)
-	if !periodStart.IsZero() {
-		query += ` AND DATE(timestamp) >= ?`
-		args = append(args, periodStart.Format("2006-01-02"))
+	if err := rows.Err(); err != nil {
+		return nil, err
 	}
 
-	var u AggregatedUsage
-	var inputTokens, outputTokens, cacheCreation, cacheRead sql.NullInt64
-	err := db.QueryRow(query, args...).Scan(&inputTokens, &outputTokens, &cacheCreation, &cacheRead)
+	// Get current cycle's data from raw records
+	var currentUsage AggregatedUsage
+	currentUsage.Period = currentCycleKey
+	err = db.QueryRow(`
+		SELECT COALESCE(SUM(input_tokens), 0), COALESCE(SUM(output_tokens), 0),
+		       COALESCE(SUM(cache_creation_tokens), 0), COALESCE(SUM(cache_read_tokens), 0)
+		FROM usage_records
+		WHERE user_id = ? AND timestamp >= ? AND timestamp <= ?
+	`, userID, cycleStart, cycleEnd).Scan(&currentUsage.InputTokens, &currentUsage.OutputTokens, &currentUsage.CacheCreationTokens, &currentUsage.CacheReadTokens)
 	if err != nil {
 		return nil, err
 	}
 
+	// Only include current cycle if there's data
+	if currentUsage.InputTokens > 0 || currentUsage.OutputTokens > 0 {
+		currentUsage.Cost = calculateCost(currentUsage.InputTokens, currentUsage.OutputTokens, currentUsage.CacheCreationTokens, currentUsage.CacheReadTokens)
+		results = append([]AggregatedUsage{currentUsage}, results...)
+	}
+
+	return results, nil
+}
+
+// GetUsageByMonth returns monthly usage for a user
+func (db *DB) GetUsageByMonth(userID string) ([]AggregatedUsage, error) {
+	now := time.Now()
+	currentMonth := now.Format("2006-01")
+
+	var results []AggregatedUsage
+
+	// Get completed months from summary table
+	rows, err := db.Query(`
+		SELECT period_key, input_tokens, output_tokens, cache_creation_tokens, cache_read_tokens
+		FROM usage_summary
+		WHERE user_id = ? AND period_type = 'month' AND period_key != ?
+		ORDER BY period_key DESC
+		LIMIT 12
+	`, userID, currentMonth)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var u AggregatedUsage
+		if err := rows.Scan(&u.Period, &u.InputTokens, &u.OutputTokens, &u.CacheCreationTokens, &u.CacheReadTokens); err != nil {
+			return nil, err
+		}
+		u.Cost = calculateCost(u.InputTokens, u.OutputTokens, u.CacheCreationTokens, u.CacheReadTokens)
+		results = append(results, u)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	// Get current month's data from raw records
+	var currentUsage AggregatedUsage
+	currentUsage.Period = currentMonth
+	err = db.QueryRow(`
+		SELECT COALESCE(SUM(input_tokens), 0), COALESCE(SUM(output_tokens), 0),
+		       COALESCE(SUM(cache_creation_tokens), 0), COALESCE(SUM(cache_read_tokens), 0)
+		FROM usage_records
+		WHERE user_id = ? AND strftime('%Y-%m', timestamp) = ?
+	`, userID, currentMonth).Scan(&currentUsage.InputTokens, &currentUsage.OutputTokens, &currentUsage.CacheCreationTokens, &currentUsage.CacheReadTokens)
+	if err != nil {
+		return nil, err
+	}
+
+	// Only include current month if there's data
+	if currentUsage.InputTokens > 0 || currentUsage.OutputTokens > 0 {
+		currentUsage.Cost = calculateCost(currentUsage.InputTokens, currentUsage.OutputTokens, currentUsage.CacheCreationTokens, currentUsage.CacheReadTokens)
+		results = append([]AggregatedUsage{currentUsage}, results...)
+	}
+
+	return results, nil
+}
+
+// GetTotalUsage returns total usage for a user, optionally filtered by billing period
+func (db *DB) GetTotalUsage(userID string, billingDay int) (*AggregatedUsage, error) {
+	now := time.Now()
+	today := now.Format("2006-01-02")
+	periodStart, _ := GetBillingPeriod(billingDay)
+
+	var u AggregatedUsage
 	u.Period = "Total"
-	u.InputTokens = inputTokens.Int64
-	u.OutputTokens = outputTokens.Int64
-	u.CacheCreationTokens = cacheCreation.Int64
-	u.CacheReadTokens = cacheRead.Int64
+
+	// Sum completed days from summaries
+	summaryQuery := `
+		SELECT COALESCE(SUM(input_tokens), 0), COALESCE(SUM(output_tokens), 0),
+		       COALESCE(SUM(cache_creation_tokens), 0), COALESCE(SUM(cache_read_tokens), 0)
+		FROM usage_summary
+		WHERE user_id = ? AND period_type = 'day' AND period_key != ?
+	`
+	args := []interface{}{userID, today}
+	if !periodStart.IsZero() {
+		summaryQuery += ` AND period_start >= ?`
+		args = append(args, periodStart)
+	}
+
+	err := db.QueryRow(summaryQuery, args...).Scan(&u.InputTokens, &u.OutputTokens, &u.CacheCreationTokens, &u.CacheReadTokens)
+	if err != nil {
+		return nil, err
+	}
+
+	// Add today's data from raw records
+	var todayInput, todayOutput, todayCacheCreation, todayCacheRead int64
+	err = db.QueryRow(`
+		SELECT COALESCE(SUM(input_tokens), 0), COALESCE(SUM(output_tokens), 0),
+		       COALESCE(SUM(cache_creation_tokens), 0), COALESCE(SUM(cache_read_tokens), 0)
+		FROM usage_records
+		WHERE user_id = ? AND DATE(timestamp) = ?
+	`, userID, today).Scan(&todayInput, &todayOutput, &todayCacheCreation, &todayCacheRead)
+	if err != nil {
+		return nil, err
+	}
+
+	u.InputTokens += todayInput
+	u.OutputTokens += todayOutput
+	u.CacheCreationTokens += todayCacheCreation
+	u.CacheReadTokens += todayCacheRead
 	u.Cost = calculateCost(u.InputTokens, u.OutputTokens, u.CacheCreationTokens, u.CacheReadTokens)
 
 	return &u, nil
@@ -574,4 +614,228 @@ func calculateCost(input, output, cacheCreation, cacheRead int64) float64 {
 	cost += float64(cacheCreation) * cacheCreationCost
 	cost += float64(cacheRead) * cacheReadCost
 	return cost
+}
+
+// UpdateSummaries updates only the summaries affected by the given records.
+// Much more efficient than rebuilding all summaries.
+func (db *DB) UpdateSummaries(userID string, billingDay int, records []UsageRecord) error {
+	if len(records) == 0 {
+		return nil
+	}
+
+	// Collect affected periods
+	affectedDays := make(map[string]bool)
+	affectedMonths := make(map[string]bool)
+	affectedCycles := make(map[string]struct{ start, end time.Time })
+
+	for _, r := range records {
+		t := r.Timestamp
+		dayKey := t.Format("2006-01-02")
+		monthKey := t.Format("2006-01")
+
+		affectedDays[dayKey] = true
+		affectedMonths[monthKey] = true
+
+		// Calculate affected cycle if billing day is set
+		if billingDay > 0 && billingDay <= 31 {
+			year, month, dayNum := t.Date()
+			var cycleStart time.Time
+			clampedDay := clampDay(year, month, billingDay)
+			if dayNum >= clampedDay {
+				cycleStart = time.Date(year, month, clampedDay, 0, 0, 0, 0, time.Local)
+			} else {
+				prevMonth := month - 1
+				prevYear := year
+				if prevMonth < 1 {
+					prevMonth = 12
+					prevYear--
+				}
+				cycleStart = time.Date(prevYear, prevMonth, clampDay(prevYear, prevMonth, billingDay), 0, 0, 0, 0, time.Local)
+			}
+
+			nextMonth := cycleStart.Month() + 1
+			nextYear := cycleStart.Year()
+			if nextMonth > 12 {
+				nextMonth = 1
+				nextYear++
+			}
+			cycleEnd := time.Date(nextYear, nextMonth, clampDay(nextYear, nextMonth, billingDay), 0, 0, 0, 0, time.Local).Add(-time.Second)
+			cycleKey := cycleStart.Format("Jan 2") + " – " + cycleEnd.Format("Jan 2")
+			affectedCycles[cycleKey] = struct{ start, end time.Time }{cycleStart, cycleEnd}
+		}
+	}
+
+	tx, err := db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	// Upsert statement
+	stmt, err := tx.Prepare(`
+		INSERT INTO usage_summary
+		(user_id, period_type, period_key, period_start, period_end, input_tokens, output_tokens, cache_creation_tokens, cache_read_tokens)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+		ON CONFLICT(user_id, period_type, period_key) DO UPDATE SET
+			input_tokens = excluded.input_tokens,
+			output_tokens = excluded.output_tokens,
+			cache_creation_tokens = excluded.cache_creation_tokens,
+			cache_read_tokens = excluded.cache_read_tokens
+	`)
+	if err != nil {
+		return err
+	}
+	defer stmt.Close()
+
+	// Update day summaries
+	for dayKey := range affectedDays {
+		dayStart, _ := time.ParseInLocation("2006-01-02", dayKey, time.Local)
+		dayEnd := dayStart.Add(24*time.Hour - time.Second)
+
+		var input, output, cacheCreation, cacheRead int64
+		err := tx.QueryRow(`
+			SELECT COALESCE(SUM(input_tokens), 0), COALESCE(SUM(output_tokens), 0),
+			       COALESCE(SUM(cache_creation_tokens), 0), COALESCE(SUM(cache_read_tokens), 0)
+			FROM usage_records
+			WHERE user_id = ? AND DATE(timestamp) = ?
+		`, userID, dayKey).Scan(&input, &output, &cacheCreation, &cacheRead)
+		if err != nil {
+			return err
+		}
+
+		if _, err := stmt.Exec(userID, "day", dayKey, dayStart, dayEnd, input, output, cacheCreation, cacheRead); err != nil {
+			return err
+		}
+	}
+
+	// Update month summaries
+	for monthKey := range affectedMonths {
+		t, _ := time.ParseInLocation("2006-01", monthKey, time.Local)
+		monthStart := time.Date(t.Year(), t.Month(), 1, 0, 0, 0, 0, time.Local)
+		monthEnd := time.Date(t.Year(), t.Month()+1, 1, 0, 0, 0, 0, time.Local).Add(-time.Second)
+
+		var input, output, cacheCreation, cacheRead int64
+		err := tx.QueryRow(`
+			SELECT COALESCE(SUM(input_tokens), 0), COALESCE(SUM(output_tokens), 0),
+			       COALESCE(SUM(cache_creation_tokens), 0), COALESCE(SUM(cache_read_tokens), 0)
+			FROM usage_records
+			WHERE user_id = ? AND strftime('%Y-%m', timestamp) = ?
+		`, userID, monthKey).Scan(&input, &output, &cacheCreation, &cacheRead)
+		if err != nil {
+			return err
+		}
+
+		if _, err := stmt.Exec(userID, "month", monthKey, monthStart, monthEnd, input, output, cacheCreation, cacheRead); err != nil {
+			return err
+		}
+	}
+
+	// Update cycle summaries
+	for cycleKey, period := range affectedCycles {
+		var input, output, cacheCreation, cacheRead int64
+		err := tx.QueryRow(`
+			SELECT COALESCE(SUM(input_tokens), 0), COALESCE(SUM(output_tokens), 0),
+			       COALESCE(SUM(cache_creation_tokens), 0), COALESCE(SUM(cache_read_tokens), 0)
+			FROM usage_records
+			WHERE user_id = ? AND timestamp >= ? AND timestamp <= ?
+		`, userID, period.start, period.end).Scan(&input, &output, &cacheCreation, &cacheRead)
+		if err != nil {
+			return err
+		}
+
+		if _, err := stmt.Exec(userID, "cycle", cycleKey, period.start, period.end, input, output, cacheCreation, cacheRead); err != nil {
+			return err
+		}
+	}
+
+	return tx.Commit()
+}
+
+// RebuildCycleSummaries rebuilds only cycle summaries for a user.
+// Use this when billing day changes.
+func (db *DB) RebuildCycleSummaries(userID string, billingDay int) error {
+	// Clear existing cycle summaries
+	if _, err := db.Exec(`DELETE FROM usage_summary WHERE user_id = ? AND period_type = 'cycle'`, userID); err != nil {
+		return err
+	}
+
+	if billingDay <= 0 || billingDay > 31 {
+		return nil
+	}
+
+	// Read from day summaries (much faster than raw records)
+	rows, err := db.Query(`
+		SELECT period_key, input_tokens, output_tokens, cache_creation_tokens, cache_read_tokens
+		FROM usage_summary
+		WHERE user_id = ? AND period_type = 'day'
+	`, userID)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+
+	cycles := make(map[string]struct {
+		start, end                              time.Time
+		input, output, cacheCreation, cacheRead int64
+	})
+
+	for rows.Next() {
+		var day string
+		var input, output, cacheCreation, cacheRead int64
+		if err := rows.Scan(&day, &input, &output, &cacheCreation, &cacheRead); err != nil {
+			return err
+		}
+
+		t, _ := time.Parse("2006-01-02", day)
+		year, month, dayNum := t.Date()
+
+		var cycleStart time.Time
+		clampedDay := clampDay(year, month, billingDay)
+		if dayNum >= clampedDay {
+			cycleStart = time.Date(year, month, clampedDay, 0, 0, 0, 0, time.Local)
+		} else {
+			prevMonth := month - 1
+			prevYear := year
+			if prevMonth < 1 {
+				prevMonth = 12
+				prevYear--
+			}
+			cycleStart = time.Date(prevYear, prevMonth, clampDay(prevYear, prevMonth, billingDay), 0, 0, 0, 0, time.Local)
+		}
+
+		nextMonth := cycleStart.Month() + 1
+		nextYear := cycleStart.Year()
+		if nextMonth > 12 {
+			nextMonth = 1
+			nextYear++
+		}
+		cycleEnd := time.Date(nextYear, nextMonth, clampDay(nextYear, nextMonth, billingDay), 0, 0, 0, 0, time.Local).Add(-time.Second)
+		cycleKey := cycleStart.Format("Jan 2") + " – " + cycleEnd.Format("Jan 2")
+
+		c := cycles[cycleKey]
+		c.start = cycleStart
+		c.end = cycleEnd
+		c.input += input
+		c.output += output
+		c.cacheCreation += cacheCreation
+		c.cacheRead += cacheRead
+		cycles[cycleKey] = c
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+
+	// Insert cycle summaries
+	for cycleKey, c := range cycles {
+		_, err := db.Exec(`
+			INSERT INTO usage_summary
+			(user_id, period_type, period_key, period_start, period_end, input_tokens, output_tokens, cache_creation_tokens, cache_read_tokens)
+			VALUES (?, 'cycle', ?, ?, ?, ?, ?, ?, ?)
+		`, userID, cycleKey, c.start, c.end, c.input, c.output, c.cacheCreation, c.cacheRead)
+		if err != nil {
+			return err
+		}
+	}
+
+	return nil
 }

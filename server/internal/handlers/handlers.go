@@ -282,8 +282,9 @@ func (h *Handler) UpdateBillingDay(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Update user object
+	// Update user object and rebuild cycle summaries (cycle periods changed)
 	user.BillingDay = billingDay
+	h.db.RebuildCycleSummaries(user.ID, billingDay)
 
 	// Return updated billing section
 	h.templates.ExecuteTemplate(w, "billing-section.html", map[string]interface{}{
@@ -383,6 +384,11 @@ func (h *Handler) APISync(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		h.jsonError(w, "Failed to insert records", http.StatusInternalServerError)
 		return
+	}
+
+	// Update summaries for affected periods only
+	if inserted > 0 {
+		h.db.UpdateSummaries(user.ID, user.BillingDay, records)
 	}
 
 	// Update last sync time
