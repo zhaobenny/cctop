@@ -8,7 +8,6 @@ services:
       # - DISABLE_REGISTRATION=true
     volumes:
       - ./data:/data
-    read_only: true
     security_opt:
       - no-new-privileges:true
     cap_drop:
