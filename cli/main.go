@@ -6,6 +6,7 @@ import (
 	"log"
 	"math/rand"
 	"os"
+	"os/user"
 	"time"
 
 	"github.com/kardianos/service"
@@ -396,7 +397,7 @@ Examples:
 	var svcCommand string
 	if len(args) > 0 {
 		switch args[0] {
-		case "install", "start", "stop", "uninstall", "status":
+		case "install", "start", "stop", "uninstall", "status", "run":
 			svcCommand = args[0]
 			args = args[1:]
 		}
@@ -404,12 +405,23 @@ Examples:
 
 	fs.Parse(args)
 
+	// Get user for service to run as (use SUDO_USER if running with sudo)
+	userName := os.Getenv("SUDO_USER")
+	if userName == "" {
+		currentUser, err := user.Current()
+		if err != nil {
+			log.Fatalf("Failed to get current user: %v", err)
+		}
+		userName = currentUser.Username
+	}
+
 	// Create service config
 	svcConfig := &service.Config{
 		Name:        "cctop-sync",
 		DisplayName: "cctop Sync Service",
 		Description: "Automatically syncs Claude Code usage data to server",
 		Arguments:   []string{"sync", "run", fmt.Sprintf("--interval=%s", interval)},
+		UserName:    userName,
 	}
 
 	svc := &syncService{interval: interval}
