@@ -212,11 +212,13 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           path: artifacts
+          pattern: cctop-*
+          merge-multiple: true
 
       - name: Prepare release assets
         run: |
           mkdir -p release
-          find artifacts -type f -exec mv {} release/ \;
+          mv artifacts/* release/
           cd release
           sha256sum * > checksums.txt
 
