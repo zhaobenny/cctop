@@ -18,6 +18,16 @@ type Config struct {
 
 // configPath returns the path to the config file
 func configPath() (string, error) {
+	// When running with sudo, use the original user's config
+	if sudoUser := os.Getenv("SUDO_USER"); sudoUser != "" {
+		// Get the original user's home directory
+		homeDir := os.Getenv("SUDO_USER_HOME")
+		if homeDir == "" {
+			homeDir = "/home/" + sudoUser
+		}
+		return filepath.Join(homeDir, ".config", "cctop", "config.yaml"), nil
+	}
+
 	configDir, err := os.UserConfigDir()
 	if err != nil {
 		return "", err
