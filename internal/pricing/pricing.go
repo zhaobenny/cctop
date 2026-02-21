@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"regexp"
 	"strings"
 	"time"
 
@@ -13,13 +14,15 @@ import (
 
 const liteLLMPricingURL = "https://raw.githubusercontent.com/BerriAI/litellm/main/model_prices_and_context_window.json"
 
+var modelDateSuffixPattern = regexp.MustCompile(`[-_]?20\d{6}$`)
+
 // liteLLMModel represents the pricing structure from LiteLLM
 type liteLLMModel struct {
-	InputCostPerToken         float64 `json:"input_cost_per_token"`
-	OutputCostPerToken        float64 `json:"output_cost_per_token"`
-	CacheCreationCost         float64 `json:"cache_creation_input_token_cost"`
-	CacheReadCost             float64 `json:"cache_read_input_token_cost"`
-	LiteLLMProvider           string  `json:"litellm_provider"`
+	InputCostPerToken  float64 `json:"input_cost_per_token"`
+	OutputCostPerToken float64 `json:"output_cost_per_token"`
+	CacheCreationCost  float64 `json:"cache_creation_input_token_cost"`
+	CacheReadCost      float64 `json:"cache_read_input_token_cost"`
+	LiteLLMProvider    string  `json:"litellm_provider"`
 }
 
 // pricingCache caches the pricing data
@@ -238,10 +241,30 @@ func GetPricing(modelName string, offline bool) model.ModelPricing {
 
 // normalizeModelName normalizes model names for matching
 func normalizeModelName(name string) string {
-	// Remove common prefixes/suffixes and normalize
-	name = strings.ToLower(name)
+	// Normalize provider-prefixed and dated model IDs into a comparable key.
+	name = strings.ToLower(strings.TrimSpace(name))
+
+	// Strip provider prefix like "anthropic/".
+	if idx := strings.LastIndex(name, "/"); idx >= 0 {
+		name = name[idx+1:]
+	}
+
+	// Strip common tags.
+	name = strings.TrimSuffix(name, "-latest")
+	if idx := strings.LastIndex(name, ":"); idx >= 0 {
+		tag := name[idx+1:]
+		if tag == "latest" || tag == "beta" {
+			name = name[:idx]
+		}
+	}
+
+	// Strip trailing date suffixes like "-20260115".
+	name = modelDateSuffixPattern.ReplaceAllString(name, "")
+
+	// Remove separators to normalize alias variants.
 	name = strings.ReplaceAll(name, "-", "")
 	name = strings.ReplaceAll(name, "_", "")
+	name = strings.ReplaceAll(name, ".", "")
 	return name
 }
 
